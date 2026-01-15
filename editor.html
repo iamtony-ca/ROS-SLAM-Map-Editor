@@ -1130,7 +1130,7 @@
   //   dlText(yamlStr, outMaskYaml, 'text/yaml'); // 수정된 yamlStr 사용
   //   // [수정 부분 끝]    
   // });
-  $('#btnDownloadMask').on('click', ()=>{
+$('#btnDownloadMask').on('click', ()=>{
     if(!pgm || !yamlObj || !mask){ alert('Load YAML and PGM first.'); return; }
     
     // 1. 마스크 PGM 데이터 생성
@@ -1142,19 +1142,29 @@
     const outMaskPgm = base + '_keepout.pgm';
     const outMaskYaml = base + '_keepout.yaml';
     
-    // 3. YAML 객체 생성 (기존 정보 + 이미지 경로 + 요청하신 파라미터 강제 덮어쓰기)
+    // 3. YAML 객체 생성
+    // 여기서 1.0을 넣어도 JS는 1로 인식하므로, 아래 단계 4에서 문자열 치환으로 해결합니다.
     const y = Object.assign({}, yamlObj, { 
       image: outMaskPgm,
       mode: 'scale',
-      occupied_thresh: 1.0,
+      occupied_thresh: 1.0, 
       free_thresh: 0.0
     });
     
-    // 4. YAML 문자열 변환 및 Origin 포맷 수정 ([x,y,z] 한 줄로)
+    // 4. YAML 문자열 변환 및 포맷 강제 수정
     let yamlStr = jsyaml.dump(y, { lineWidth: 1000 });
+
+    // [Fix 1] origin 포맷을 [x, y, z] 한 줄로 변경
     yamlStr = yamlStr.replace(/origin:\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)/g, 'origin: [$1, $2, $3]');
     
-    // 5. 파일 다운로드 실행
+    // [Fix 2] occupied_thresh: 1 -> 1.0 변경
+    // (정규식 설명: occupied_thresh: 뒤에 공백과 숫자 1이 오고, 줄바꿈이나 끝이 오는 경우를 찾음)
+    yamlStr = yamlStr.replace(/occupied_thresh:\s*1(\s*)$/m, 'occupied_thresh: 1.0$1');
+    
+    // [Fix 3] free_thresh: 0 -> 0.0 변경
+    yamlStr = yamlStr.replace(/free_thresh:\s*0(\s*)$/m, 'free_thresh: 0.0$1');
+    
+    // 5. 다운로드 실행
     dlBytes(maskBytes, outMaskPgm, 'image/x-portable-graymap');
     dlText(yamlStr, outMaskYaml, 'text/yaml');
   });

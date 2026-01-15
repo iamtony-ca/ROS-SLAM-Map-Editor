@@ -183,3 +183,63 @@ Keep-out 마스크 다운로드 버튼 로직도 동일하게 적용합니다.
 ### 적용 원리
 
 `Object.assign({}, yamlObj, { ... })` 함수는 뒤에 오는 객체의 속성들이 앞의 객체 속성을 덮어쓰는(overwrite) 성질을 가집니다. 따라서 기존 `yamlObj`에 어떤 값이 있었든 상관없이, 우리가 지정한 `mode`, `thresh` 값들이 최종적으로 저장됩니다.
+
+#####################  
+############################  
+###################################  
+네, 맞습니다. 자바스크립트에서는 `1.0`과 `1`을 동일한 숫자(Number)로 취급하기 때문에, `js-yaml` 라이브러리가 덤프할 때 소수점 아래가 0이면 자동으로 정수(`1`, `0`)로 변환하여 출력해 버립니다.
+
+이를 강제로 `1.0`, `0.0`으로 맞추기 위해서는, 아까 `origin` 배열을 수정했던 것처럼 **문자열로 변환된 후에 강제로 내용을 바꿔치기(Replace)** 하는 방법이 가장 확실합니다.
+
+`$('#btnDownloadMask').on('click', ...)` 부분을 아래 코드로 다시 업데이트해 주세요.
+
+### 수정된 코드
+
+```javascript
+  $('#btnDownloadMask').on('click', ()=>{
+    if(!pgm || !yamlObj || !mask){ alert('Load YAML and PGM first.'); return; }
+    
+    // 1. 마스크 PGM 데이터 생성
+    const m = { magic:'P5', width: pgm.width, height: pgm.height, maxval: 255, pixels: mask };
+    const maskBytes = encodePGM(m);
+    
+    // 2. 파일명 생성
+    const base = (pgmName||'map.pgm').replace(/\.pgm$/i,'');
+    const outMaskPgm = base + '_keepout.pgm';
+    const outMaskYaml = base + '_keepout.yaml';
+    
+    // 3. YAML 객체 생성
+    // 여기서 1.0을 넣어도 JS는 1로 인식하므로, 아래 단계 4에서 문자열 치환으로 해결합니다.
+    const y = Object.assign({}, yamlObj, { 
+      image: outMaskPgm,
+      mode: 'scale',
+      occupied_thresh: 1.0, 
+      free_thresh: 0.0
+    });
+    
+    // 4. YAML 문자열 변환 및 포맷 강제 수정
+    let yamlStr = jsyaml.dump(y, { lineWidth: 1000 });
+
+    // [Fix 1] origin 포맷을 [x, y, z] 한 줄로 변경
+    yamlStr = yamlStr.replace(/origin:\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)/g, 'origin: [$1, $2, $3]');
+    
+    // [Fix 2] occupied_thresh: 1 -> 1.0 변경
+    // (정규식 설명: occupied_thresh: 뒤에 공백과 숫자 1이 오고, 줄바꿈이나 끝이 오는 경우를 찾음)
+    yamlStr = yamlStr.replace(/occupied_thresh:\s*1(\s*)$/m, 'occupied_thresh: 1.0$1');
+    
+    // [Fix 3] free_thresh: 0 -> 0.0 변경
+    yamlStr = yamlStr.replace(/free_thresh:\s*0(\s*)$/m, 'free_thresh: 0.0$1');
+    
+    // 5. 다운로드 실행
+    dlBytes(maskBytes, outMaskPgm, 'image/x-portable-graymap');
+    dlText(yamlStr, outMaskYaml, 'text/yaml');
+  });
+
+```
+
+### 변경 사항 설명
+
+코드 중간에 `[Fix 2]`와 `[Fix 3]` 주석 부분을 추가했습니다.
+
+* `yamlStr.replace(...)` 함수를 사용하여, 생성된 텍스트 파일 내용 중 `occupied_thresh: 1`이라고 적힌 부분을 찾아서 강제로 `occupied_thresh: 1.0`으로 바꿔치기합니다. `free_thresh`도 마찬가지로 적용됩니다.
+* 이렇게 하면 자바스크립트의 숫자 타입 특성과 상관없이 원하시는 결과물을 얻을 수 있습니다.
