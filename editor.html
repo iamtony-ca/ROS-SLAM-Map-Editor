@@ -586,7 +586,7 @@
   
     if(tool === 'mask'){
       //paintBuffer('mask', mask, w, h, mx, my, rad, 0);
-      paintBuffer('mask', mask, w, h, mx, my, rad, 160);
+      paintBuffer('mask', mask, w, h, mx, my, rad, 94);
       redrawMask();
     } else if(tool === 'paint'){
       paintBuffer('pgm', pgm.pixels, w, h, mx, my, rad, 0);
@@ -641,7 +641,7 @@
     const drawPoint = (mx,my)=>{
       if(tool==='paint')      paintBuffer('pgm', pgm.pixels, w,h, mx,my, rad, 0);
       //else if(tool==='mask')  paintBuffer('mask', mask,       w,h, mx,my, rad, 0);
-      else if(tool==='mask')  paintBuffer('mask', mask,       w,h, mx,my, rad, 160);
+      else if(tool==='mask')  paintBuffer('mask', mask,       w,h, mx,my, rad, 94);
       else if(tool==='erase'){paintBuffer('pgm', pgm.pixels,  w,h, mx,my, rad, maxval);
                                paintBuffer('mask', mask,      w,h, mx,my, rad, 255);}
       else if(tool==='unscan'){paintBuffer('pgm', pgm.pixels, w,h, mx,my, rad, unknown);}
@@ -690,7 +690,7 @@
     // Decide values per active tool
     const mapVal  = (tool==='paint') ? 0 : (tool==='erase' ? maxval : (tool==='unscan' ? unknown : null));
     // const maskVal = (tool==='mask')  ? 0 : (tool==='erase' ? 255    : null);
-    const maskVal = (tool==='mask')  ? 160 : (tool==='erase' ? 255    : null);
+    const maskVal = (tool==='mask')  ? 94 : (tool==='erase' ? 255    : null);
   
     for(let y = yMin; y <= yMax; y++){
       const rowBase = y * w;
