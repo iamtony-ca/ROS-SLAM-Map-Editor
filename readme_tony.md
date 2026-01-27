@@ -243,3 +243,128 @@ Keep-out 마스크 다운로드 버튼 로직도 동일하게 적용합니다.
 
 * `yamlStr.replace(...)` 함수를 사용하여, 생성된 텍스트 파일 내용 중 `occupied_thresh: 1`이라고 적힌 부분을 찾아서 강제로 `occupied_thresh: 1.0`으로 바꿔치기합니다. `free_thresh`도 마찬가지로 적용됩니다.
 * 이렇게 하면 자바스크립트의 숫자 타입 특성과 상관없이 원하시는 결과물을 얻을 수 있습니다.
+
+###################################  
+#######################################  
+##########################################  
+260127  
+웹 브라우저의 보안 정책상 **"파일이 저장될 폴더 경로(Path)"를 자바스크립트로 강제로 지정하는 것은 불가능**합니다. (항상 브라우저의 기본 다운로드 폴더로 저장되거나, 사용자가 직접 폴더를 선택하는 창이 뜹니다.)
+
+하지만 **"파일명"**은 우리가 원하는 대로, **[현재날짜_시분초]** 포맷을 붙여서 지정할 수 있습니다.
+
+아래 순서대로 코드를 수정해 보세요.
+
+---
+
+### 1단계: 날짜 생성 함수 추가
+
+스크립트 내부, `(function(){ ...` 바로 안쪽이나 상단 변수 선언부 근처에 아래 함수를 추가합니다. 현재 시간을 `20250709_143000` 같은 문자열로 만들어주는 함수입니다.
+
+```javascript
+  // 날짜 포맷 헬퍼 (YYYYMMDD_HHMMSS)
+  function getTimestamp() {
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    const mm = pad(now.getMonth() + 1);
+    const dd = pad(now.getDate());
+    const hh = pad(now.getHours());
+    const min = pad(now.getMinutes());
+    const ss = pad(now.getSeconds());
+    return `${yyyy}${mm}${dd}_${hh}${min}${ss}`;
+  }
+
+```
+
+---
+
+### 2단계: 'Download Map' 버튼 로직 수정
+
+기존 `$('#btnDownloadMap').on('click', ...)` 부분을 아래 코드로 교체합니다.
+
+```javascript
+  $('#btnDownloadMap').on('click', ()=>{
+    if(!pgm || !yamlObj){ alert('Load YAML and PGM first.'); return; }
+    
+    // 1. 타임스탬프 생성
+    const ts = getTimestamp();
+    const base = (pgmName || 'map').replace(/\.pgm$/i, ''); // 확장자 제거된 이름
+    
+    // 2. 파일명 지정 (_edited_[날짜].pgm)
+    const outPgm = `${base}_edited_${ts}.pgm`;
+    const outYaml = `${base}_edited_${ts}.yaml`;
+    
+    // 3. YAML 내부 image 경로 업데이트 및 포맷 수정
+    const pgmBytes = encodePGM(pgm);
+    
+    // image 경로를 새 파일명으로 변경
+    const y = Object.assign({}, yamlObj, { image: outPgm });
+    
+    // YAML 덤프 후 origin 포맷 교정 ([x,y,z] 한 줄로)
+    let yamlStr = jsyaml.dump(y, { lineWidth: 1000 });
+    yamlStr = yamlStr.replace(/origin:\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)/g, 'origin: [$1, $2, $3]');
+
+    dlBytes(pgmBytes, outPgm, 'image/x-portable-graymap');
+    dlText(yamlStr, outYaml, 'text/yaml');
+  });
+
+```
+
+---
+
+### 3단계: 'Download Keepout Mask' 버튼 로직 수정
+
+이전에 요청하신 **`occupied_thresh: 1.0`**, **`origin` 포맷 수정**, **`128` (또는 `94`) 값 설정** 등을 모두 유지하면서 파일명만 변경하는 코드입니다.
+
+기존 `$('#btnDownloadMask').on('click', ...)` 부분을 아래 코드로 **완전히 교체**하세요.
+
+```javascript
+  $('#btnDownloadMask').on('click', ()=>{
+    if(!pgm || !yamlObj || !mask){ alert('Load YAML and PGM first.'); return; }
+    
+    // 1. 타임스탬프 생성
+    const ts = getTimestamp();
+    const base = (pgmName || 'map').replace(/\.pgm$/i, '');
+    
+    // 2. 파일명 지정 (_keepout_[날짜].pgm)
+    const outMaskPgm = `${base}_keepout_${ts}.pgm`;
+    const outMaskYaml = `${base}_keepout_${ts}.yaml`;
+
+    // 3. 마스크 PGM 데이터 생성
+    const m = { magic:'P5', width: pgm.width, height: pgm.height, maxval: 255, pixels: mask };
+    const maskBytes = encodePGM(m);
+    
+    // 4. YAML 객체 생성 (이미지 경로 + 파라미터 강제)
+    const y = Object.assign({}, yamlObj, { 
+      image: outMaskPgm,
+      mode: 'scale',
+      occupied_thresh: 1.0, 
+      free_thresh: 0.0
+    });
+    
+    // 5. YAML 문자열 변환 및 포맷 교정
+    let yamlStr = jsyaml.dump(y, { lineWidth: 1000 });
+
+    // [Fix 1] origin 포맷 교정
+    yamlStr = yamlStr.replace(/origin:\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)/g, 'origin: [$1, $2, $3]');
+    
+    // [Fix 2] occupied_thresh: 1 -> 1.0 강제 변환
+    yamlStr = yamlStr.replace(/occupied_thresh:\s*1(\s*)$/m, 'occupied_thresh: 1.0$1');
+    
+    // [Fix 3] free_thresh: 0 -> 0.0 강제 변환
+    yamlStr = yamlStr.replace(/free_thresh:\s*0(\s*)$/m, 'free_thresh: 0.0$1');
+    
+    // 6. 다운로드 실행
+    dlBytes(maskBytes, outMaskPgm, 'image/x-portable-graymap');
+    dlText(yamlStr, outMaskYaml, 'text/yaml');
+  });
+
+```
+
+### 결과
+
+이제 다운로드 버튼을 누르면:
+
+1. **파일명:** `map_keepout_20250709_143000.yaml` 처럼 현재 시간이 자동으로 붙습니다.
+2. **YAML 내용:** `image: map_keepout_20250709_143000.pgm`으로 내부 경로도 자동으로 맞춰집니다.
+3. **저장 위치:** 브라우저 설정에 따라 '다운로드' 폴더에 저장되거나, 저장 위치를 묻는 창이 뜹니다.
