@@ -224,6 +224,20 @@
 
 <script>
 (function(){
+
+  // 날짜 포맷 헬퍼 (YYYYMMDD_HHMMSS)
+  function getTimestamp() {
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    const mm = pad(now.getMonth() + 1);
+    const dd = pad(now.getDate());
+    const hh = pad(now.getHours());
+    const min = pad(now.getMinutes());
+    const ss = pad(now.getSeconds());
+    return `${yyyy}${mm}${dd}_${hh}${min}${ss}`;
+  }
+
   // ===== State =====
   let yamlObj = null, yamlText = '', yamlName = 'map.yaml';
   let pgm = null, pgmName = 'map.pgm';
@@ -586,7 +600,7 @@
   
     if(tool === 'mask'){
       //paintBuffer('mask', mask, w, h, mx, my, rad, 0);
-      paintBuffer('mask', mask, w, h, mx, my, rad, 160);
+      paintBuffer('mask', mask, w, h, mx, my, rad, 94);
       redrawMask();
     } else if(tool === 'paint'){
       paintBuffer('pgm', pgm.pixels, w, h, mx, my, rad, 0);
@@ -641,7 +655,7 @@
     const drawPoint = (mx,my)=>{
       if(tool==='paint')      paintBuffer('pgm', pgm.pixels, w,h, mx,my, rad, 0);
       //else if(tool==='mask')  paintBuffer('mask', mask,       w,h, mx,my, rad, 0);
-      else if(tool==='mask')  paintBuffer('mask', mask,       w,h, mx,my, rad, 160);
+      else if(tool==='mask')  paintBuffer('mask', mask,       w,h, mx,my, rad, 94);
       else if(tool==='erase'){paintBuffer('pgm', pgm.pixels,  w,h, mx,my, rad, maxval);
                                paintBuffer('mask', mask,      w,h, mx,my, rad, 255);}
       else if(tool==='unscan'){paintBuffer('pgm', pgm.pixels, w,h, mx,my, rad, unknown);}
@@ -690,7 +704,7 @@
     // Decide values per active tool
     const mapVal  = (tool==='paint') ? 0 : (tool==='erase' ? maxval : (tool==='unscan' ? unknown : null));
     // const maskVal = (tool==='mask')  ? 0 : (tool==='erase' ? 255    : null);
-    const maskVal = (tool==='mask')  ? 160 : (tool==='erase' ? 255    : null);
+    const maskVal = (tool==='mask')  ? 94 : (tool==='erase' ? 255    : null);
   
     for(let y = yMin; y <= yMax; y++){
       const rowBase = y * w;
@@ -1102,14 +1116,43 @@
     return yamlStr;    
   }
 
+  // $('#btnDownloadMap').on('click', ()=>{
+  //   if(!pgm || !yamlObj){ alert('Load YAML and PGM first.'); return; }
+  //   const pgmBytes = encodePGM(pgm);
+  //   const outPgm = pgmName.replace(/\.pgm$/i,'_edited.pgm');
+  //   const outYaml = (yamlName||'map.yaml').replace(/\.ya?ml$/i,'_edited.yaml');
+  //   dlBytes(pgmBytes, outPgm, 'image/x-portable-graymap');
+  //   dlText(buildUpdatedYaml(outPgm), outYaml, 'text/yaml');
+  // });
+
   $('#btnDownloadMap').on('click', ()=>{
     if(!pgm || !yamlObj){ alert('Load YAML and PGM first.'); return; }
+    
+    // 1. 타임스탬프 생성
+    const ts = getTimestamp();
+    const base = (pgmName || 'map').replace(/\.pgm$/i, ''); // 확장자 제거된 이름
+    
+    // 2. 파일명 지정 (_edited_[날짜].pgm)
+    const outPgm = `${base}_edited_${ts}.pgm`;
+    const outYaml = `${base}_edited_${ts}.yaml`;
+    
+    // 3. YAML 내부 image 경로 업데이트 및 포맷 수정
     const pgmBytes = encodePGM(pgm);
-    const outPgm = pgmName.replace(/\.pgm$/i,'_edited.pgm');
-    const outYaml = (yamlName||'map.yaml').replace(/\.ya?ml$/i,'_edited.yaml');
+    
+    // image 경로를 새 파일명으로 변경
+    const y = Object.assign({}, yamlObj, { image: outPgm });
+    
+    // YAML 덤프 후 origin 포맷 교정 ([x,y,z] 한 줄로)
+    let yamlStr = jsyaml.dump(y, { lineWidth: 1000 });
+    yamlStr = yamlStr.replace(/origin:\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)/g, 'origin: [$1, $2, $3]');
+
     dlBytes(pgmBytes, outPgm, 'image/x-portable-graymap');
-    dlText(buildUpdatedYaml(outPgm), outYaml, 'text/yaml');
+    dlText(yamlStr, outYaml, 'text/yaml');
   });
+
+
+
+
 
   // $('#btnDownloadMask').on('click', ()=>{
   //   if(!pgm || !yamlObj || !mask){ alert('Load YAML and PGM first.'); return; }
@@ -1130,20 +1173,61 @@
   //   dlText(yamlStr, outMaskYaml, 'text/yaml'); // 수정된 yamlStr 사용
   //   // [수정 부분 끝]    
   // });
-$('#btnDownloadMask').on('click', ()=>{
+// $('#btnDownloadMask').on('click', ()=>{
+//     if(!pgm || !yamlObj || !mask){ alert('Load YAML and PGM first.'); return; }
+    
+//     // 1. 마스크 PGM 데이터 생성
+//     const m = { magic:'P5', width: pgm.width, height: pgm.height, maxval: 255, pixels: mask };
+//     const maskBytes = encodePGM(m);
+    
+//     // 2. 파일명 생성
+//     const base = (pgmName||'map.pgm').replace(/\.pgm$/i,'');
+//     const outMaskPgm = base + '_keepout.pgm';
+//     const outMaskYaml = base + '_keepout.yaml';
+    
+//     // 3. YAML 객체 생성
+//     // 여기서 1.0을 넣어도 JS는 1로 인식하므로, 아래 단계 4에서 문자열 치환으로 해결합니다.
+//     const y = Object.assign({}, yamlObj, { 
+//       image: outMaskPgm,
+//       mode: 'scale',
+//       occupied_thresh: 1.0, 
+//       free_thresh: 0.0
+//     });
+    
+//     // 4. YAML 문자열 변환 및 포맷 강제 수정
+//     let yamlStr = jsyaml.dump(y, { lineWidth: 1000 });
+
+//     // [Fix 1] origin 포맷을 [x, y, z] 한 줄로 변경
+//     yamlStr = yamlStr.replace(/origin:\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)/g, 'origin: [$1, $2, $3]');
+    
+//     // [Fix 2] occupied_thresh: 1 -> 1.0 변경
+//     // (정규식 설명: occupied_thresh: 뒤에 공백과 숫자 1이 오고, 줄바꿈이나 끝이 오는 경우를 찾음)
+//     yamlStr = yamlStr.replace(/occupied_thresh:\s*1(\s*)$/m, 'occupied_thresh: 1.0$1');
+    
+//     // [Fix 3] free_thresh: 0 -> 0.0 변경
+//     yamlStr = yamlStr.replace(/free_thresh:\s*0(\s*)$/m, 'free_thresh: 0.0$1');
+    
+//     // 5. 다운로드 실행
+//     dlBytes(maskBytes, outMaskPgm, 'image/x-portable-graymap');
+//     dlText(yamlStr, outMaskYaml, 'text/yaml');
+//   });
+
+  $('#btnDownloadMask').on('click', ()=>{
     if(!pgm || !yamlObj || !mask){ alert('Load YAML and PGM first.'); return; }
     
-    // 1. 마스크 PGM 데이터 생성
+    // 1. 타임스탬프 생성
+    const ts = getTimestamp();
+    const base = (pgmName || 'map').replace(/\.pgm$/i, '');
+    
+    // 2. 파일명 지정 (_keepout_[날짜].pgm)
+    const outMaskPgm = `${base}_keepout_${ts}.pgm`;
+    const outMaskYaml = `${base}_keepout_${ts}.yaml`;
+
+    // 3. 마스크 PGM 데이터 생성
     const m = { magic:'P5', width: pgm.width, height: pgm.height, maxval: 255, pixels: mask };
     const maskBytes = encodePGM(m);
     
-    // 2. 파일명 생성
-    const base = (pgmName||'map.pgm').replace(/\.pgm$/i,'');
-    const outMaskPgm = base + '_keepout.pgm';
-    const outMaskYaml = base + '_keepout.yaml';
-    
-    // 3. YAML 객체 생성
-    // 여기서 1.0을 넣어도 JS는 1로 인식하므로, 아래 단계 4에서 문자열 치환으로 해결합니다.
+    // 4. YAML 객체 생성 (이미지 경로 + 파라미터 강제)
     const y = Object.assign({}, yamlObj, { 
       image: outMaskPgm,
       mode: 'scale',
@@ -1151,24 +1235,22 @@ $('#btnDownloadMask').on('click', ()=>{
       free_thresh: 0.0
     });
     
-    // 4. YAML 문자열 변환 및 포맷 강제 수정
+    // 5. YAML 문자열 변환 및 포맷 교정
     let yamlStr = jsyaml.dump(y, { lineWidth: 1000 });
 
-    // [Fix 1] origin 포맷을 [x, y, z] 한 줄로 변경
+    // [Fix 1] origin 포맷 교정
     yamlStr = yamlStr.replace(/origin:\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)\s*\n\s*-\s*([0-9.-]+)/g, 'origin: [$1, $2, $3]');
     
-    // [Fix 2] occupied_thresh: 1 -> 1.0 변경
-    // (정규식 설명: occupied_thresh: 뒤에 공백과 숫자 1이 오고, 줄바꿈이나 끝이 오는 경우를 찾음)
+    // [Fix 2] occupied_thresh: 1 -> 1.0 강제 변환
     yamlStr = yamlStr.replace(/occupied_thresh:\s*1(\s*)$/m, 'occupied_thresh: 1.0$1');
     
-    // [Fix 3] free_thresh: 0 -> 0.0 변경
+    // [Fix 3] free_thresh: 0 -> 0.0 강제 변환
     yamlStr = yamlStr.replace(/free_thresh:\s*0(\s*)$/m, 'free_thresh: 0.0$1');
     
-    // 5. 다운로드 실행
+    // 6. 다운로드 실행
     dlBytes(maskBytes, outMaskPgm, 'image/x-portable-graymap');
     dlText(yamlStr, outMaskYaml, 'text/yaml');
   });
-
 
 
 
