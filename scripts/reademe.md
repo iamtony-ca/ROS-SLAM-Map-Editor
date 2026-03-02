@@ -62,3 +62,13 @@ http://127.0.0.1:8080/editor.html
 ```
 server ip address:8080/editor.html
 ```
+
+
+# check if port is in use or not
+```
+lsof -i :8080
+```
+or
+```
+ss -tuln | grep 8080
+```
