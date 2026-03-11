@@ -1020,62 +1020,61 @@
     maskCtx.drawImage(tmp, 0,0, maskCanvas.width, maskCanvas.height);
   }
 
-  // ===== PGM parsing/encoding =====
+
+// ===== PGM parsing/encoding =====
   function parsePGM(uint8){
-    const textHead = new TextDecoder().decode(uint8.slice(0, 1024));
-    const magic = textHead.slice(0,2);
-    if(magic !== 'P5' && magic !== 'P2') throw new Error('Unsupported PGM magic');
-
-    function* tokens(bytes){
-      let s = '';
-      for(let i=0;i<bytes.length;i++){
-        const c = String.fromCharCode(bytes[i]);
-        if(c==='#'){ while(i<bytes.length && String.fromCharCode(bytes[i])!=='\n') i++; continue; }
-        if(/\s/.test(c)){ if(s.length){ yield s; s=''; } } else s+=c;
-        if(s.length>256) throw new Error('Header token too long');
-      } if(s.length) yield s;
+    // 1. 헤더 분석을 위해 처음 1024 바이트만 안전하게 1:1 문자열로 변환합니다.
+    let headLen = Math.min(uint8.length, 1024);
+    let str = '';
+    for(let k=0; k<headLen; k++) {
+      str += String.fromCharCode(uint8[k]);
     }
-    const it = tokens(uint8);
-    const mg = it.next().value; if(mg !== magic) throw new Error('Malformed header');
-    const w = parseInt(it.next().value,10);
-    const h = parseInt(it.next().value,10);
-    const maxv = parseInt(it.next().value,10);
-    if(!(w>0 && h>0 && maxv>0)) throw new Error('Invalid pgm dims/maxval');
+    
+    // 2. 정규식(Regex)을 이용해 PGM 헤더를 완벽하게 매칭합니다.
+    // (매직넘버, 공백, 주석, 너비, 높이, 최대값을 모두 포함하며, 마지막 줄바꿈(\n)까지 정확히 타격)
+    const headerRegex = /^(P[25])\s+(?:#[^\n]*[\n\r]+\s*)*(\d+)\s+(?:#[^\n]*[\n\r]+\s*)*(\d+)\s+(?:#[^\n]*[\n\r]+\s*)*(\d+)[ \t\r]*\n/;
+    const match = str.match(headerRegex);
+    
+    if (!match) throw new Error("Invalid PGM header format");
+    
+    const magic = match[1];
+    const w = parseInt(match[2], 10);
+    const h = parseInt(match[3], 10);
+    const maxval = parseInt(match[4], 10);
+    
+    if(!(w>0 && h>0 && maxval>0)) throw new Error('Invalid pgm dims/maxval');
 
+    // 3. 정규식으로 매칭된 전체 문자열의 길이가 곧 '바이너리 데이터가 시작되는 정확한 바이트 인덱스'입니다.
+    // 어떠한 공백 문자나 주석 변칙이 있어도 1바이트의 오차도 발생하지 않습니다.
+    const dataStart = match[0].length;
+
+    // 4. 데이터 파싱
     if(magic === 'P2'){
-      const restTxt = new TextDecoder().decode(uint8);
-      const headerRe = new RegExp(`^\\s*${magic}[\\s\\S]*?\\b${maxv}\\b`);
-      const headerMatch = restTxt.match(headerRe);
-      const start = headerMatch ? headerMatch[0].length : 0;
-      const nums = restTxt.slice(start).match(/\d+/g) || [];
+      const restTxt = new TextDecoder().decode(uint8.slice(dataStart));
+      const nums = restTxt.match(/\d+/g) || [];
       if(nums.length < w*h) throw new Error('P2 data too short');
       const pixels = new Uint16Array(w*h);
-      for(let i=0;i<w*h;i++) pixels[i] = Math.min(maxv, parseInt(nums[i],10));
-      return {magic, width:w, height:h, maxval:maxv, pixels};
-    }else{
-      // After maxval, first non-ws is raster
-      let nums=0, i=2, inTok=false;
-      while(i < uint8.length && nums < 3){
-        const c = uint8[i];
-        if(c === 35){ while(i<uint8.length && uint8[i]!==10) i++; }
-        else if(c > 32){ if(!inTok){ inTok=true; nums++; } }
-        else{ if(inTok){ inTok=false; } }
-        i++;
-      }
-      while(i < uint8.length && uint8[i] <= 32) i++;
-      const dataStart = i;
+      for(let k=0; k<w*h; k++) pixels[k] = Math.min(maxval, parseInt(nums[k],10));
+      return {magic, width:w, height:h, maxval, pixels};
+    } else {
+      const pixels = (maxval>255) ? new Uint16Array(w*h) : new Uint8Array(w*h);
+      const bytesPer = (maxval>255) ? 2 : 1;
+      const needed = w * h * bytesPer;
 
-      const pixels = (maxv>255) ? new Uint16Array(w*h) : new Uint8Array(w*h);
-      const bytesPer = (maxv>255)?2:1;
-      const needed = w*h*bytesPer;
       if(dataStart + needed > uint8.length) throw new Error('P5 data too short');
-      if(bytesPer===1){ pixels.set(uint8.slice(dataStart, dataStart+needed)); }
-      else{
-        let p=0; for(let k=0;k<needed;k+=2){ pixels[p++] = (uint8[dataStart+k]<<8) | uint8[dataStart+k+1]; }
+
+      if(bytesPer===1){
+        pixels.set(uint8.slice(dataStart, dataStart + needed));
+      } else {
+        let p=0;
+        for(let k=0; k<needed; k+=2){
+          pixels[p++] = (uint8[dataStart+k] << 8) | uint8[dataStart+k+1];
+        }
       }
-      return {magic, width:w, height:h, maxval:maxv, pixels};
+      return {magic, width:w, height:h, maxval, pixels};
     }
   }
+
 
   function encodePGM(pgm){
     const {width:w, height:h, maxval, pixels} = pgm;
