@@ -368,3 +368,129 @@ Keep-out 마스크 다운로드 버튼 로직도 동일하게 적용합니다.
 1. **파일명:** `map_keepout_20250709_143000.yaml` 처럼 현재 시간이 자동으로 붙습니다.
 2. **YAML 내용:** `image: map_keepout_20250709_143000.pgm`으로 내부 경로도 자동으로 맞춰집니다.
 3. **저장 위치:** 브라우저 설정에 따라 '다운로드' 폴더에 저장되거나, 저장 위치를 묻는 창이 뜹니다.
+##
+##
+##
+현상을 아주 정확하게 보셨습니다! 착각하신 게 아닙니다.
+
+코드를 깊이 있게 분석해 본 결과, 저장 후 Nav2에서 맵이 미세하게 틀어지는(Shift) 원인을 찾아냈습니다. 문제는 캔버스 렌더링이나 YAML 저장 로직이 아니라, **처음 PGM 파일을 읽어 들일 때 바이너리 데이터의 시작점을 찾는 `parsePGM()` 함수의 파싱 로직 버그**에 있었습니다.
+
+이 현상이 왜 발생하는지, 그리고 어떻게 완벽하게 고칠 수 있는지 상세히 짚어드리겠습니다.
+
+---
+
+### 🔍 원인 분석: 픽셀 데이터를 텍스트로 착각하는 버그
+
+문제의 핵심은 `parsePGM()` 함수 내에 있는 아래의 코드 블록입니다. PGM 파일의 헤더(`P5`, `너비`, `높이`, `최대값`)를 건너뛰고 실제 픽셀 데이터가 시작되는 지점(`dataStart`)을 찾는 역할을 합니다.
+
+```javascript
+// [기존 문제의 코드]
+let nums=0, i=2, inTok=false;
+while(i < uint8.length && nums < 3){
+  const c = uint8[i];
+  if(c === 35){ while(i<uint8.length && uint8[i]!==10) i++; }
+  else if(c > 32){ if(!inTok){ inTok=true; nums++; } } // <-- 버그 발생 지점
+  else{ if(inTok){ inTok=false; } }
+  i++;
+}
+while(i < uint8.length && uint8[i] <= 32) i++;
+const dataStart = i;
+
+```
+
+**동작 실패 시나리오:**
+
+1. 헤더의 마지막 값인 `maxval` (예: `255`)를 읽을 때, 문자 `2`를 만나는 순간 `nums`가 3이 되면서 `while` 문이 **즉시 종료**되어 버립니다.
+2. 따라서 인덱스 `i`는 `255`의 두 번째 글자인 `5`를 가리키게 됩니다.
+3. 이어지는 `while (uint8[i] <= 32)`는 문자 `5` (ASCII 코드 53)를 만나자마자 종료됩니다.
+4. 결국 `dataStart`가 **`255`라는 텍스트의 중간으로 지정**됩니다!
+
+이로 인해 실제 맵 데이터 배열의 맨 앞부분에 `5`, `5`, `\n` (ASCII 값 53, 53, 10) 같은 엉뚱한 헤더 문자들이 첫 3개의 픽셀로 들어가 버립니다. 결과적으로 전체 이미지가 2~3픽셀 정도 왼쪽(혹은 위쪽)으로 밀려버리고(Shift), 끝부분은 잘려나가는 치명적인 데이터 변형이 일어났던 것입니다.
+
+---
+
+### 🛠️ 해결책: `parsePGM` 함수 전면 교체
+
+텍스트 헤더와 바이너리 데이터를 엄격하게 분리하여 파싱하도록 `parsePGM` 함수를 완전히 재작성했습니다.
+
+`editor.html` 코드 중 기존 `function parsePGM(uint8) { ... }` 부분을 통째로 아래 코드로 교체해 주세요.
+
+```javascript
+  // ===== PGM parsing/encoding =====
+  function parsePGM(uint8){
+    let i = 0;
+
+    // 공백 및 주석(#)을 안전하게 건너뛰는 헬퍼 함수
+    function skipWhitespaceAndComments() {
+      while (i < uint8.length) {
+        if (uint8[i] <= 32) {
+          i++;
+        } else if (uint8[i] === 35) { // '#' 주석 처리
+          while (i < uint8.length && uint8[i] !== 10) i++;
+        } else {
+          break;
+        }
+      }
+    }
+
+    // 다음 텍스트 토큰을 추출하는 헬퍼 함수
+    function nextToken() {
+      skipWhitespaceAndComments();
+      let s = '';
+      while (i < uint8.length && uint8[i] > 32 && uint8[i] !== 35) {
+        s += String.fromCharCode(uint8[i]);
+        i++;
+      }
+      return s;
+    }
+
+    // 1. 헤더 파싱
+    const magic = nextToken();
+    if(magic !== 'P5' && magic !== 'P2') throw new Error('Unsupported PGM magic');
+
+    const w = parseInt(nextToken(), 10);
+    const h = parseInt(nextToken(), 10);
+    const maxval = parseInt(nextToken(), 10);
+
+    if(!(w>0 && h>0 && maxval>0)) throw new Error('Invalid pgm dims/maxval');
+
+    // PGM 스펙: maxval 이후 '정확히 단 하나의 공백 문자'가 오고 바이너리가 시작됨
+    if (i < uint8.length && uint8[i] <= 32) {
+      i++; // 단일 공백(보통 \n) 건너뛰기
+    }
+    
+    const dataStart = i;
+
+    // 2. 데이터 파싱
+    if(magic === 'P2'){
+      const restTxt = new TextDecoder().decode(uint8.slice(dataStart));
+      const nums = restTxt.match(/\d+/g) || [];
+      if(nums.length < w*h) throw new Error('P2 data too short');
+      const pixels = new Uint16Array(w*h);
+      for(let k=0; k<w*h; k++) pixels[k] = Math.min(maxval, parseInt(nums[k],10));
+      return {magic, width:w, height:h, maxval, pixels};
+    } else {
+      const pixels = (maxval>255) ? new Uint16Array(w*h) : new Uint8Array(w*h);
+      const bytesPer = (maxval>255) ? 2 : 1;
+      const needed = w * h * bytesPer;
+
+      if(dataStart + needed > uint8.length) throw new Error('P5 data too short');
+
+      if(bytesPer===1){
+        pixels.set(uint8.slice(dataStart, dataStart + needed));
+      } else {
+        let p=0;
+        for(let k=0; k<needed; k+=2){
+          pixels[p++] = (uint8[dataStart+k] << 8) | uint8[dataStart+k+1];
+        }
+      }
+      return {magic, width:w, height:h, maxval, pixels};
+    }
+  }
+
+```
+
+이 코드를 적용하시면, 맵을 Load 하고 별다른 수정 없이 바로 Download 했을 때 원본 맵과 **단 1픽셀의 오차나 밀림 없이 완벽하게 동일한 맵**이 생성됩니다.
+
+코드를 수정하신 후 맵을 다시 불러와서 밀림 현상이 완벽히 사라졌는지 테스트해 보시겠어요? 결과 확인 후, 앞서 말씀드린 Docker 연동 작업으로 넘어가도 좋을 것 같습니다.
+7. 
